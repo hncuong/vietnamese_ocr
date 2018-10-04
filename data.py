@@ -27,11 +27,11 @@ def padding_image(img, new_width, new_height,
     assert start_x + height <= new_height
     assert start_y + width <= new_width
     if chanels == 3:
-        new_img = np.ones((new_height, new_width, 3), dtype=int) * background
+        new_img = np.ones((new_height, new_width, 3), dtype=np.uint8) * background
         new_img[start_x: start_x + height, start_y: start_y + width, :] = img
     else:
         # grayscale
-        new_img = np.ones((new_height, new_width), dtype=int) * background
+        new_img = np.ones((new_height, new_width), dtype=np.uint8) * background
         new_img[start_x: start_x + height, start_y: start_y + width] = img
     return new_img
 
