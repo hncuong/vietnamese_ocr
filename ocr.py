@@ -22,6 +22,7 @@ from keras.preprocessing.image import ImageDataGenerator
 import tensorflow as tf
 import argparse
 from data import random_padding
+import editdistance
 
 parser = argparse.ArgumentParser(description='Ocr training arguments')
 parser.add_argument('--datapath', default='/data/cuonghn/data/cinamon/ocr/train/')
@@ -136,9 +137,37 @@ class VizCallback(keras.callbacks.Callback):
         self.text_size = text_size
         self.sess = sess
 
+    def show_edit_distance(self, num):
+        num_left = num
+        mean_norm_ed = 0.0
+        mean_ed = 0.0
+        while num_left > 0:
+            word_batch = next(self.text_img_gen.next_batch())[0]
+            num_proc = min(word_batch['input_1'].shape[0], num_left)
+            # predict
+            inputs = word_batch['input_1'][0:num_proc]
+            pred = self.y_func([inputs])[0]
+            decoded_res = beamsearch(self.sess, pred)#decode_batch(pred)
+            # label
+            labels = word_batch['the_labels'][:num_proc].astype(np.int32)
+            labels = [labels_to_text(label) for label in labels]
+            
+            for j in range(num_proc):
+                edit_dist = editdistance.eval(decoded_res[j], labels[j])
+                mean_ed += float(edit_dist)
+                mean_norm_ed += float(edit_dist) / len(labels[j])
+
+            num_left -= num_proc
+        mean_norm_ed = mean_norm_ed / num
+        mean_ed = mean_ed / num
+        print('\nOut of %d samples:  Mean edit distance:'
+              '%.3f Mean normalized edit distance: %0.3f'
+              % (num, mean_ed, mean_norm_ed))
+
     def on_epoch_end(self, epoch, logs={}):
         batch = next(self.text_img_gen.next_batch())[0]
-        inputs = batch['the_inputs'][:self.num_display_words]
+        # inputs = batch['the_inputs'][:self.num_display_words]
+        inputs = batch['input_1'][:self.num_display_words]
         labels = batch['the_labels'][:self.num_display_words].astype(np.int32)
         labels = [labels_to_text(label) for label in labels]
         
@@ -148,6 +177,8 @@ class VizCallback(keras.callbacks.Callback):
         for i in range(min(self.num_display_words, len(inputs))):
             print(f"Label: {labels[i]}\nUnformat pred: {pred_texts0[i]}\nPredict: {pred_texts[i]}")
             print(f"Word beam search pred: {pred_beamsearch_texts[i]}")
+        
+        self.show_edit_distance(self.text_size)
 
 """
 Image Generator
@@ -189,7 +220,7 @@ class TextImageGenerator:
         for i, img_file in enumerate(self.img_dir):
             img = cv2.imread(os.path.join(self.img_dirpath, img_file), cv2.IMREAD_GRAYSCALE)
             # Add random padding
-            img = random_padding(img, max_width_height_ratio=20, min_width_height_ratio=10, chanels=1)
+            # img = random_padding(img, max_width_height_ratio=20, min_width_height_ratio=10, chanels=1)
             # Resize & black white
             img = cv2.resize(img, (self.img_w, self.img_h))
             (thresh, img) = cv2.threshold(img, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
@@ -231,7 +262,8 @@ class TextImageGenerator:
                 label_length[i] = len(text)
 
             inputs = {
-                'the_inputs': X_data,  # (bs, 128, 64, 1)
+                # 'the_inputs': X_data,  # (bs, 128, 64, 1)
+                'input_1': X_data,  # (bs, 128, 64, 1)
                 'the_labels': Y_data,  # (bs, 8)
                 'input_length': input_length,  # (bs, 1)
                 'label_length': label_length  # (bs, 1)
@@ -244,9 +276,11 @@ class TextImageGenerator:
 Training path
 """
 def get_model(input_shape, training, finetune):
-    inputs = Input(name='the_inputs', shape=input_shape, dtype='float32')
-    base_model = applications.VGG16(weights='imagenet', include_top=False)
-    inner = base_model(inputs)
+    # inputs = Input(name='the_inputs', shape=input_shape, dtype='float32')
+    base_model = applications.VGG16(weights='imagenet', include_top=False, input_shape=input_shape)
+    inputs = base_model.input
+    inner = base_model.output
+    # inner = base_model(inputs)
     inner = Reshape(target_shape=(int(inner.shape[1]), -1), name='reshape')(inner)
     inner = Dense(512, activation='relu', kernel_initializer='he_normal', name='dense1')(inner) 
     inner = Dropout(0.5)(inner)
